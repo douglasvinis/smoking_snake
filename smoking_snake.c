@@ -83,10 +83,33 @@ typedef struct
 
 typedef struct
 {
+	float x, y;
+}Vec2;
+// small util math functions
+// @cleanup check if all these are used.
+Vec2 vec2(float x, float y)
+{
+	Vec2 result = {x, y};
+	return result;
+}
+Vec2 vec2_mul(float a, Vec2 b) {return vec2(a*b.x, a*b.y);}
+Vec2 vec2_div(Vec2 a, float b) {return vec2(a.x/b, a.y/b);}
+Vec2 vec2_add(Vec2 a, Vec2 b)  {return vec2(a.x+b.x, a.y+b.y);}
+Vec2 vec2_sub(Vec2 a, Vec2 b) {return vec2(a.x-b.x, a.y-b.y);}
+float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
+Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
+
+typedef struct
+{
+	Vec2 pos;
+	Vec2 next_pos;
+	Vec2 input_dir;
+}SnakeCell;
+typedef struct
+{
 	b32 initialized;
 	u32 points;
-	float pos_x;
-	float pos_y;
+	SnakeCell snake;
 }Game;
 
 //
@@ -137,29 +160,37 @@ void change_key(Key* key, s32 diff_add)
 //
 // Game procs
 //
+#define CELL_SIZE 40
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
+	SnakeCell* snake = &game->snake;
 	if (!game->initialized)
 	{
 		game->initialized = true;
-		game->pos_x = WINDOW_WIDTH/2 - 25;
-		game->pos_y = WINDOW_HEIGHT/2 - 25;
+		snake->pos = vec2_add(vec2_mul(0.5f, vec2(WINDOW_WIDTH, WINDOW_HEIGHT)), vec2(-25.0f, -25.0f));
+		snake->input_dir = vec2(0, 1);
+		snake->next_pos = snake->pos;
 	}
-	float dir_x = 0;
-	float dir_y = 0;
-	if (is_down(input->left)) dir_x = -1;
-	if (is_down(input->right)) dir_x = 1;
-	if (is_down(input->up)) dir_y = -1;
-	if (is_down(input->down)) dir_y = 1;
+	if (is_down(input->left)) {snake->input_dir.x = -1; snake->input_dir.y = 0;}
+	if (is_down(input->right)) {snake->input_dir.x = 1; snake->input_dir.y = 0;}
+	if (is_down(input->up)) {snake->input_dir.y = -1; snake->input_dir.x = 0;}
+	if (is_down(input->down)) {snake->input_dir.y = 1; snake->input_dir.x = 0;}
 
-	game->pos_x += dir_x * 200.0 * dt;
-	game->pos_y += dir_y * 200.0 * dt;
-
+	Vec2 pos_dist = vec2_sub(snake->next_pos, snake->pos);
+	float n_pos_dist = vec2_length(pos_dist);
+	Vec2 n_pos_dir = vec2_div(pos_dist, n_pos_dist);
+	snake->pos = vec2_add(vec2_mul(200.0 * dt, n_pos_dir), snake->pos);
+	if (n_pos_dist < 2.0f)
+	{
+		snake->pos = snake->next_pos;
+		snake->next_pos = vec2_add(snake->pos, vec2_mul(CELL_SIZE, snake->input_dir));
+	}
 	//
 	// Rendering
 	//
 	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, BG_COLOR_0);
-	draw_rectangle(backbuffer, (u32)game->pos_x, (u32)game->pos_y, 50, 50, 0x00d0d0);
+	draw_rectangle(backbuffer, 360 - 25, 0, 40, WINDOW_HEIGHT, 0xc0c0c0);
+	draw_rectangle(backbuffer, (u32)snake->pos.x, (u32)snake->pos.y, 40, 40, 0x00d0d0);
 }
 
 int main()

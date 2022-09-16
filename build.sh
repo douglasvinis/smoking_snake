@@ -11,5 +11,5 @@ then
 fi
 
 # @todo turn on warnings
-cc -g smoking_snake.c -o bin/smoking_snake -lSDL2
+cc -g smoking_snake.c -o bin/smoking_snake -lSDL2 -lm
 echo __DONE__
