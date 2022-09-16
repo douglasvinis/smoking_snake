@@ -10,5 +10,6 @@ then
 	mkdir bin
 fi
 
+# @todo turn on warnings
 cc -g smoking_snake.c -o bin/smoking_snake -lSDL2
 echo __DONE__
