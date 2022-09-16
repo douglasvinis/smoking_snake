@@ -14,6 +14,8 @@ typedef unsigned int b32;
 typedef unsigned int u32;
 typedef unsigned char u8;
 typedef int s32;
+typedef short s16;
+typedef unsigned short u16;
 #define true 1
 #define false !true
 
@@ -32,12 +34,15 @@ typedef int s32;
 #define ASSERT(...)
 #endif
 
+//
 // Data layout
+//
 typedef struct
 {
 	float r, g, b, a;
 }Color;
 
+//renderer
 // @note Pixmap is here just because i may decide draw a Pixmap into a Pixmap later instead of drawing everything
 // into the SDL_Surface always.
 typedef struct
@@ -50,10 +55,30 @@ typedef struct
 	u8* pixels;
 }Pixmap;
 
+// input
 typedef struct
 {
-	float dir_x;
-	float dir_y;
+	s16 changed;
+	u16 up_down_diff;
+}Key;
+b32 is_just_down(Key key)
+{
+	b32 result = key.changed && key.up_down_diff == 0;
+	return result;
+}
+b32 is_down(Key key)
+{
+	b32 result = key.up_down_diff == 1;
+	return result;
+}
+
+// game
+typedef struct
+{
+	Key up;
+	Key left;
+	Key right;
+	Key down;
 }Input;
 
 typedef struct
@@ -64,8 +89,9 @@ typedef struct
 	float pos_y;
 }Game;
 
-
-// Draw procs
+//
+// Renderer procs
+//
 u32 get_u32_color(Color color)
 {
 	u32 result = ((u32)(color.a*255.0) << 24 |
@@ -102,7 +128,15 @@ void draw_rectangle(Pixmap* pixmap, s32 pos_x, s32 pos_y, s32 width, s32 height,
 	}
 }
 
+void change_key(Key* key, s32 diff_add)
+{
+	key->changed = true;
+	key->up_down_diff += diff_add;
+}
+
+//
 // Game procs
+//
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
 	if (!game->initialized)
@@ -111,9 +145,19 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		game->pos_x = WINDOW_WIDTH/2 - 25;
 		game->pos_y = WINDOW_HEIGHT/2 - 25;
 	}
-	game->pos_x += input->dir_x * 1000.0 * dt;
-	game->pos_y += input->dir_y * 1000.0 * dt;
-	// drawing.
+	float dir_x = 0;
+	float dir_y = 0;
+	if (is_down(input->left)) dir_x = -1;
+	if (is_down(input->right)) dir_x = 1;
+	if (is_down(input->up)) dir_y = -1;
+	if (is_down(input->down)) dir_y = 1;
+
+	game->pos_x += dir_x * 200.0 * dt;
+	game->pos_y += dir_y * 200.0 * dt;
+
+	//
+	// Rendering
+	//
 	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, BG_COLOR_0);
 	draw_rectangle(backbuffer, (u32)game->pos_x, (u32)game->pos_y, 50, 50, 0x00d0d0);
 }
@@ -149,9 +193,16 @@ int main()
 		b32 is_running = true;
 		while (is_running)
 		{
-			input.dir_x = 0;
-			input.dir_y = 0;
+			//
+			// Input
+			//
 			SDL_Event event;
+			// cleanup input keys
+			input.left.changed = false;
+			input.right.changed = false;
+			input.up.changed = false;
+			input.down.changed = false;
+
 			while (SDL_PollEvent(&event))
 			{
 				switch (event.type)
@@ -165,20 +216,35 @@ int main()
 					{
 						b32 is_key_down = event.key.type == SDL_KEYDOWN;
 						SDL_Keycode keycode = event.key.keysym.sym;
-						switch (keycode) 
+						if (!event.key.repeat)
 						{
-							case SDLK_w: input.dir_y = -1; break;
-							case SDLK_s: input.dir_y = 1; break;
-							case SDLK_a: input.dir_x = -1; break;
-							case SDLK_d: input.dir_x = 1; break;
+							if (is_key_down)
+							{
+								switch (keycode) 
+								{
+									case SDLK_w: change_key(&input.up, 1); break;
+									case SDLK_s: change_key(&input.down, 1); break;
+									case SDLK_a: change_key(&input.left, 1); break;
+									case SDLK_d: change_key(&input.right, 1); break;
+								}
+							}
+							else
+							{
+								switch (keycode) 
+								{
+									case SDLK_w: change_key(&input.up, -1); break;
+									case SDLK_s: change_key(&input.down, -1); break;
+									case SDLK_a: change_key(&input.left, -1); break;
+									case SDLK_d: change_key(&input.right, -1); break;
+								}
+							}
 						}
 					}break;
 				}
 			}
 
-			// update and draw the game.
 			game_tick(backbuffer, game, &input, delta_time);
-			
+
 			// sleep some time to maintain 16ms if needed.
 			u32 work_time = SDL_GetTicks64() - time_last_frame;
 			// if work time is greater than the frame time just dont sleep.
