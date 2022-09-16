@@ -41,6 +41,11 @@ typedef struct
 {
 	float r, g, b, a;
 }Color;
+Color make_color(float r, float g, float b, float a)
+{
+	Color result = {r, g, b, a};
+	return result;
+}
 
 //renderer
 // @note Pixmap is here just because i may decide draw a Pixmap into a Pixmap later instead of drawing everything
@@ -99,17 +104,22 @@ Vec2 vec2_sub(Vec2 a, Vec2 b) {return vec2(a.x-b.x, a.y-b.y);}
 float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
 Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
 
+#define MAX_SNAKE_CELLS 128
 typedef struct
 {
-	Vec2 pos;
-	Vec2 next_pos;
-	Vec2 input_dir;
+	Vec2 from_pos;
+	Vec2 to_pos;
+	Vec2 follow_pos;
+	float pos_t;
+	float radius;
 }SnakeCell;
 typedef struct
 {
 	b32 initialized;
 	u32 points;
-	SnakeCell snake;
+	Vec2 input_dir;
+	u32 snake_cell_count;
+	SnakeCell snake[MAX_SNAKE_CELLS];
 }Game;
 
 //
@@ -160,37 +170,75 @@ void change_key(Key* key, s32 diff_add)
 //
 // Game procs
 //
-#define CELL_SIZE 40
+#define CELL_SIZE 40.0f
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
-	SnakeCell* snake = &game->snake;
 	if (!game->initialized)
 	{
 		game->initialized = true;
-		snake->pos = vec2_add(vec2_mul(0.5f, vec2(WINDOW_WIDTH, WINDOW_HEIGHT)), vec2(-25.0f, -25.0f));
-		snake->input_dir = vec2(0, 1);
-		snake->next_pos = snake->pos;
-	}
-	if (is_down(input->left)) {snake->input_dir.x = -1; snake->input_dir.y = 0;}
-	if (is_down(input->right)) {snake->input_dir.x = 1; snake->input_dir.y = 0;}
-	if (is_down(input->up)) {snake->input_dir.y = -1; snake->input_dir.x = 0;}
-	if (is_down(input->down)) {snake->input_dir.y = 1; snake->input_dir.x = 0;}
 
-	Vec2 pos_dist = vec2_sub(snake->next_pos, snake->pos);
-	float n_pos_dist = vec2_length(pos_dist);
-	Vec2 n_pos_dir = vec2_div(pos_dist, n_pos_dist);
-	snake->pos = vec2_add(vec2_mul(200.0 * dt, n_pos_dir), snake->pos);
-	if (n_pos_dist < 2.0f)
-	{
-		snake->pos = snake->next_pos;
-		snake->next_pos = vec2_add(snake->pos, vec2_mul(CELL_SIZE, snake->input_dir));
+		// snake head
+		game->snake_cell_count = 20;
+
+		for (s32 si=0; si < game->snake_cell_count; si++)
+		{
+			SnakeCell* cell = game->snake + si;
+			cell->radius = 32.0f;
+			cell->from_pos = vec2_mul(0.5f, vec2(WINDOW_WIDTH, WINDOW_HEIGHT));
+			cell->to_pos = game->snake[0].from_pos;
+			cell->pos_t = 1.0;
+		}
+
+		game->input_dir = vec2(1, 0);
 	}
+	if (is_down(input->left)) {game->input_dir.x = -1; game->input_dir.y = 0;}
+	if (is_down(input->right)) {game->input_dir.x = 1; game->input_dir.y = 0;}
+	if (is_down(input->up)) {game->input_dir.y = -1; game->input_dir.x = 0;}
+	if (is_down(input->down)) {game->input_dir.y = 1; game->input_dir.x = 0;}
+
 	//
 	// Rendering
 	//
 	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, BG_COLOR_0);
-	draw_rectangle(backbuffer, 360 - 25, 0, 40, WINDOW_HEIGHT, 0xc0c0c0);
-	draw_rectangle(backbuffer, (u32)snake->pos.x, (u32)snake->pos.y, 40, 40, 0x00d0d0);
+	draw_rectangle(backbuffer, 360 - 20, 0, 40, WINDOW_HEIGHT, 0xc0c0c0);
+
+	for (s32 si=0; si < game->snake_cell_count; si++)
+	{
+		SnakeCell* cell = game->snake + si;
+		Vec2 pos_dist = vec2_sub(cell->to_pos, cell->from_pos);
+		float n_pos_dist = vec2_length(pos_dist);
+		Vec2 n_pos_dir = vec2_div(pos_dist, n_pos_dist); // normalization
+
+		cell->pos_t += 5.2 * dt;
+		Vec2 pos = vec2_add(cell->from_pos, vec2_mul(cell->pos_t * n_pos_dist, n_pos_dir));
+		if (cell->pos_t >= 1.0)
+		{
+			cell->pos_t = 0;
+			cell->from_pos = cell->to_pos;
+			cell->follow_pos = cell->from_pos;
+			if (cell->from_pos.x < 0)
+			{
+				s32 cells = (s32)((float)WINDOW_WIDTH/CELL_SIZE);
+				cells += 1;
+				Vec2 pos = vec2(cells * CELL_SIZE, cell->from_pos.y);
+				cell->from_pos = pos;
+			}
+
+			if (si == 0)
+			{
+				cell->to_pos = vec2_add(cell->from_pos, vec2_mul(CELL_SIZE, game->input_dir));
+			}
+			else 
+			{
+				SnakeCell* last_cell = game->snake + si-1;
+				cell->to_pos = last_cell->follow_pos;
+			}
+		}
+		Color color = make_color(0.25f, 0.5f, 0, 1);
+		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
+		draw_rectangle(backbuffer, (u32)(pos.x - 0.5*cell->radius),
+				(u32)(pos.y - 0.5*cell->radius), cell->radius, cell->radius, get_u32_color(color));
+	}
 }
 
 int main()
