@@ -25,7 +25,7 @@ typedef unsigned short u16;
 #define WINDOW_HEIGHT 720
 
 // game stuff
-#define CELL_COUNT 45 // horizontal and vertical cell count @note keep this uneven
+#define CELL_COUNT 25 // horizontal and vertical cell count @note keep this uneven
 #define HALF_CELL_COUNT (CELL_COUNT/2)
 
 // debug stuff.
@@ -112,7 +112,6 @@ typedef struct
 {
 	Vec2 from_pos;
 	Vec2 to_pos;
-	Vec2 follow_pos;
 	float pos_t;
 	float radius;
 }SnakePart;
@@ -176,9 +175,6 @@ void change_key(Key* key, s32 diff_add)
 //
 // Game procs
 //
-#define CELL_SIZE 40.0f
-#define H_CELL_COUNT ((float)WINDOW_WIDTH/CELL_SIZE)
-
 Vec2 get_cell_pos(Game* game, s32 cell_x, s32 cell_y)
 {
 	Vec2 sub = vec2_mul(game->cell_size, vec2((float)cell_x, (float)cell_y));
@@ -212,8 +208,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			part->radius = 0.7f * game->cell_size;
 			part->from_pos = get_cell_pos(game, 0, 0);
 			part->to_pos = part->from_pos;
-			part->follow_pos = part->from_pos;
-			part->pos_t = 1.0;
+			part->pos_t = 0.0;
 		}
 		game->input_dir = vec2(1, 0);
 	}
@@ -242,7 +237,6 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 	}
 
-#if 1
 	for (s32 si=0; si < game->snake_part_count; si++)
 	{
 		SnakePart* part = game->snake + si;
@@ -250,44 +244,30 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		float distance = vec2_length(displacement);
 		Vec2 pos_dir = vec2_div(displacement, distance); // normalization
 
-		part->pos_t += 5.2 * dt;
+		part->pos_t += 8.2 * dt;
 		Vec2 pos = vec2_add(part->from_pos, vec2_mul(part->pos_t * distance, pos_dir));
 		if (part->pos_t >= 1.0)
 		{
 			part->pos_t = 0;
 			part->from_pos = part->to_pos;
-			part->follow_pos = part->from_pos;
-			s32 n_cell_x = 0;
-			s32 n_cell_y = 0;
-			get_cell_from_pos(game, part->from_pos, &n_cell_x, &n_cell_y);
-			if (n_cell_x < -HALF_CELL_COUNT)
-			{
-				Vec2 pos = get_cell_pos(game, HALF_CELL_COUNT, n_cell_y);
-				part->from_pos = pos;
-			}
-			if (n_cell_x > HALF_CELL_COUNT)
-			{
-				Vec2 pos = get_cell_pos(game, -HALF_CELL_COUNT, n_cell_y);
-				part->from_pos = pos;
-			}
-			if (n_cell_y < -HALF_CELL_COUNT)
-			{
-				Vec2 pos = get_cell_pos(game, n_cell_x, HALF_CELL_COUNT);
-				part->from_pos = pos;
-			}
-			if (n_cell_y > HALF_CELL_COUNT)
-			{
-				Vec2 pos = get_cell_pos(game, n_cell_x, -HALF_CELL_COUNT);
-				part->from_pos = pos;
-			}
 			if (si == 0)
 			{
-				part->to_pos = vec2_add(part->from_pos, vec2_mul(game->cell_size, game->input_dir));
+				s32 cell_x = 0;
+				s32 cell_y = 0;
+				get_cell_from_pos(game, part->from_pos, &cell_x, &cell_y);
+				cell_x += (s32)game->input_dir.x;
+				cell_y += (s32)game->input_dir.y;
+				if (cell_x < -HALF_CELL_COUNT) cell_x = HALF_CELL_COUNT;
+				if (cell_x > HALF_CELL_COUNT) cell_x = -HALF_CELL_COUNT;
+				if (cell_y < -HALF_CELL_COUNT) cell_y = HALF_CELL_COUNT;
+				if (cell_y > HALF_CELL_COUNT) cell_y = -HALF_CELL_COUNT;
+
+				part->to_pos =  get_cell_pos(game, cell_x, cell_y);
 			}
 			else 
 			{
 				SnakePart* last_part = game->snake + si-1;
-				part->to_pos = last_part->follow_pos;
+				part->to_pos = last_part->from_pos;
 			}
 		}
 		Color color = make_color(0.25f, 0.5f, 0, 1);
@@ -295,7 +275,6 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
 				(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
 	}
-#endif
 }
 
 int main()
