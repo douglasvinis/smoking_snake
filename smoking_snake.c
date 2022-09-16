@@ -20,10 +20,13 @@ typedef unsigned short u16;
 #define false !true
 
 // the size of the game window.
+// @todo make the screen correct 
 #define WINDOW_WIDTH 720
 #define WINDOW_HEIGHT 720
 
-#define BG_COLOR_0 0x5a0059
+// game stuff
+#define CELL_COUNT 45 // horizontal and vertical cell count @note keep this uneven
+#define HALF_CELL_COUNT (CELL_COUNT/2)
 
 // debug stuff.
 #define DEBUG_MODE 1 // this activate some debug printf's and ASSERT
@@ -104,7 +107,7 @@ Vec2 vec2_sub(Vec2 a, Vec2 b) {return vec2(a.x-b.x, a.y-b.y);}
 float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
 Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
 
-#define MAX_SNAKE_CELLS 128
+#define MAX_SNAKE_PARTS 128
 typedef struct
 {
 	Vec2 from_pos;
@@ -112,14 +115,17 @@ typedef struct
 	Vec2 follow_pos;
 	float pos_t;
 	float radius;
-}SnakeCell;
+}SnakePart;
 typedef struct
 {
 	b32 initialized;
 	u32 points;
+	Vec2 grid_center;
+	float cell_size;
+
 	Vec2 input_dir;
-	u32 snake_cell_count;
-	SnakeCell snake[MAX_SNAKE_CELLS];
+	u32 snake_part_count;
+	SnakePart snake[MAX_SNAKE_PARTS];
 }Game;
 
 //
@@ -171,24 +177,44 @@ void change_key(Key* key, s32 diff_add)
 // Game procs
 //
 #define CELL_SIZE 40.0f
+#define H_CELL_COUNT ((float)WINDOW_WIDTH/CELL_SIZE)
+
+Vec2 get_cell_pos(Game* game, s32 cell_x, s32 cell_y)
+{
+	Vec2 sub = vec2_mul(game->cell_size, vec2((float)cell_x, (float)cell_y));
+	Vec2 result = vec2_add(game->grid_center, sub);
+	return result;
+}
+
+// @todo maybe store the cell index into the snake part instead of this.
+void get_cell_from_pos(Game* game, Vec2 pos, s32* cell_x, s32* cell_y)
+{
+	pos = vec2_sub(pos, game->grid_center);
+	Vec2 amount = vec2_div(pos, game->cell_size);
+	*cell_x = (s32)roundf(amount.x);
+	*cell_y = (s32)roundf(amount.y);
+}
+
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
 	if (!game->initialized)
 	{
 		game->initialized = true;
 
+		game->grid_center = vec2_mul(0.5f, vec2(WINDOW_WIDTH, WINDOW_HEIGHT));
+		game->cell_size = (float)WINDOW_WIDTH/(float)CELL_COUNT;
 		// snake head
-		game->snake_cell_count = 20;
+		game->snake_part_count = 24;
 
-		for (s32 si=0; si < game->snake_cell_count; si++)
+		for (s32 si=0; si < game->snake_part_count; si++)
 		{
-			SnakeCell* cell = game->snake + si;
-			cell->radius = 32.0f;
-			cell->from_pos = vec2_mul(0.5f, vec2(WINDOW_WIDTH, WINDOW_HEIGHT));
-			cell->to_pos = game->snake[0].from_pos;
-			cell->pos_t = 1.0;
+			SnakePart* part = game->snake + si;
+			part->radius = 0.7f * game->cell_size;
+			part->from_pos = get_cell_pos(game, 0, 0);
+			part->to_pos = part->from_pos;
+			part->follow_pos = part->from_pos;
+			part->pos_t = 1.0;
 		}
-
 		game->input_dir = vec2(1, 0);
 	}
 	if (is_down(input->left)) {game->input_dir.x = -1; game->input_dir.y = 0;}
@@ -199,46 +225,77 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 	//
 	// Rendering
 	//
-	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, BG_COLOR_0);
-	draw_rectangle(backbuffer, 360 - 20, 0, 40, WINDOW_HEIGHT, 0xc0c0c0);
+	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, get_u32_color(make_color(0.4f, 0, 0.35f, 1.0f)));
 
-	for (s32 si=0; si < game->snake_cell_count; si++)
+	// drawing a grid
+	for (s32 cell_y=-HALF_CELL_COUNT; cell_y <= HALF_CELL_COUNT; cell_y++)
 	{
-		SnakeCell* cell = game->snake + si;
-		Vec2 pos_dist = vec2_sub(cell->to_pos, cell->from_pos);
-		float n_pos_dist = vec2_length(pos_dist);
-		Vec2 n_pos_dir = vec2_div(pos_dist, n_pos_dist); // normalization
-
-		cell->pos_t += 5.2 * dt;
-		Vec2 pos = vec2_add(cell->from_pos, vec2_mul(cell->pos_t * n_pos_dist, n_pos_dir));
-		if (cell->pos_t >= 1.0)
+		for (s32 cell_x=-HALF_CELL_COUNT; cell_x <= HALF_CELL_COUNT; cell_x++)
 		{
-			cell->pos_t = 0;
-			cell->from_pos = cell->to_pos;
-			cell->follow_pos = cell->from_pos;
-			if (cell->from_pos.x < 0)
-			{
-				s32 cells = (s32)((float)WINDOW_WIDTH/CELL_SIZE);
-				cells += 1;
-				Vec2 pos = vec2(cells * CELL_SIZE, cell->from_pos.y);
-				cell->from_pos = pos;
-			}
+			Vec2 pos = get_cell_pos(game, cell_x, cell_y);
+			Color color = make_color(0.3, 0, 0.25, 1.0);
+			float margin = 2.0f;
+			Vec2 offset = vec2(-0.5 * game->cell_size + margin, -0.5* game->cell_size + margin);
+			pos = vec2_add(pos, offset);
+			draw_rectangle(backbuffer, pos.x, pos.y, game->cell_size-2*margin,
+					game->cell_size-2*margin, get_u32_color(color));
+		}
+	}
 
+#if 1
+	for (s32 si=0; si < game->snake_part_count; si++)
+	{
+		SnakePart* part = game->snake + si;
+		Vec2 displacement = vec2_sub(part->to_pos, part->from_pos);
+		float distance = vec2_length(displacement);
+		Vec2 pos_dir = vec2_div(displacement, distance); // normalization
+
+		part->pos_t += 5.2 * dt;
+		Vec2 pos = vec2_add(part->from_pos, vec2_mul(part->pos_t * distance, pos_dir));
+		if (part->pos_t >= 1.0)
+		{
+			part->pos_t = 0;
+			part->from_pos = part->to_pos;
+			part->follow_pos = part->from_pos;
+			s32 n_cell_x = 0;
+			s32 n_cell_y = 0;
+			get_cell_from_pos(game, part->from_pos, &n_cell_x, &n_cell_y);
+			if (n_cell_x < -HALF_CELL_COUNT)
+			{
+				Vec2 pos = get_cell_pos(game, HALF_CELL_COUNT, n_cell_y);
+				part->from_pos = pos;
+			}
+			if (n_cell_x > HALF_CELL_COUNT)
+			{
+				Vec2 pos = get_cell_pos(game, -HALF_CELL_COUNT, n_cell_y);
+				part->from_pos = pos;
+			}
+			if (n_cell_y < -HALF_CELL_COUNT)
+			{
+				Vec2 pos = get_cell_pos(game, n_cell_x, HALF_CELL_COUNT);
+				part->from_pos = pos;
+			}
+			if (n_cell_y > HALF_CELL_COUNT)
+			{
+				Vec2 pos = get_cell_pos(game, n_cell_x, -HALF_CELL_COUNT);
+				part->from_pos = pos;
+			}
 			if (si == 0)
 			{
-				cell->to_pos = vec2_add(cell->from_pos, vec2_mul(CELL_SIZE, game->input_dir));
+				part->to_pos = vec2_add(part->from_pos, vec2_mul(game->cell_size, game->input_dir));
 			}
 			else 
 			{
-				SnakeCell* last_cell = game->snake + si-1;
-				cell->to_pos = last_cell->follow_pos;
+				SnakePart* last_part = game->snake + si-1;
+				part->to_pos = last_part->follow_pos;
 			}
 		}
 		Color color = make_color(0.25f, 0.5f, 0, 1);
 		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
-		draw_rectangle(backbuffer, (u32)(pos.x - 0.5*cell->radius),
-				(u32)(pos.y - 0.5*cell->radius), cell->radius, cell->radius, get_u32_color(color));
+		draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
+				(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
 	}
+#endif
 }
 
 int main()
