@@ -20,7 +20,7 @@ typedef unsigned short u16;
 #define false !true
 
 // the size of the game window.
-// @todo make the screen correct 
+// @todo make the screen resizeable and aspect ratio correct.
 #define WINDOW_WIDTH 720
 #define WINDOW_HEIGHT 720
 
@@ -103,11 +103,6 @@ Vec2 vec2_lerp(Vec2 from, float t, Vec2 to) {return  vec2_add(vec2_mul((1.0f -t)
 // Game
 typedef struct
 {
-	s32 x;
-	s32 y;
-}GridPos; // @todo change all s32 pair in the game to this.
-typedef struct
-{
 	Key up;
 	Key left;
 	Key right;
@@ -115,15 +110,31 @@ typedef struct
 }Input;
 typedef struct
 {
-	s32 cell_x, cell_y;
+	s32 x;
+	s32 y;
+}GridPos;
+GridPos grid_pos(s32 x, s32 y)
+{
+	GridPos result = {x, y};
+	return result;
+}
+b32 is_grid_pos_equal(GridPos a, GridPos b)
+{
+	b32 result = (a.x == b.x) && (a.y == b.y);
+	return result;
+}
+
+typedef struct
+{
+	GridPos pos;
 	float timer;
 	b32 eaten;
 	b32 active;
 }Food;
 typedef struct
 {
-	s32 from_x, from_y;
-	s32 to_x, to_y;
+	GridPos from_pos;
+	GridPos to_pos;
 	float pos_t;
 	float radius;
 }SnakePart;
@@ -152,8 +163,7 @@ typedef struct
 	u32 input_queue_count;
 	u32 input_queue[MAX_INPUT_QUEUE];
 
-	s32 snake_dir_x;
-	s32 snake_dir_y;
+	GridPos snake_dir;
 
 	Food food_list[MAX_FOOD_COUNT];
 
@@ -224,39 +234,26 @@ void spawn_food(Game* game)
 	chosen->active = true;
 	chosen->eaten = false;
 	chosen->timer = 30;
-	chosen->cell_x = (rand() % 25) - HALF_CELL_COUNT;
-	chosen->cell_y = (rand() % 25) - HALF_CELL_COUNT;
+	chosen->pos.x = (rand() % 25) - HALF_CELL_COUNT;
+	chosen->pos.y = (rand() % 25) - HALF_CELL_COUNT;
 }
 
-SnakePart* grow_snake(Game* game,s32 cell_x, s32 cell_y)
+SnakePart* grow_snake(Game* game, GridPos pos)
 {
 	SnakePart* part = game->snake + game->snake_part_count++;
 	part->radius = 0.7f * game->cell_size;
-	part->from_x = cell_x;
-	part->from_y = cell_y;
-	part->to_x = cell_x;
-	part->to_y = cell_y;
+	part->from_pos = pos;
+	part->to_pos = pos;
 	part->pos_t = 0.0;
 	return part;
 }
 
-Vec2 get_cell_pos(Game* game, s32 cell_x, s32 cell_y)
+Vec2 get_cell_pos(Game* game, GridPos pos)
 {
-	Vec2 sub = vec2_mul(game->cell_size, vec2((float)cell_x, (float)cell_y));
+	Vec2 sub = vec2_mul(game->cell_size, vec2((float)pos.x, (float)pos.y));
 	Vec2 result = vec2_add(game->grid_center, sub);
 	return result;
 }
-
-#if 0
-// @todo maybe store the cell index into the snake part instead of this.
-void get_cell_from_pos(Game* game, Vec2 pos, s32* cell_x, s32* cell_y)
-{
-	pos = vec2_sub(pos, game->grid_center);
-	Vec2 amount = vec2_div(pos, game->cell_size);
-	*cell_x = (s32)roundf(amount.x);
-	*cell_y = (s32)roundf(amount.y);
-}
-#endif
 
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
@@ -276,25 +273,25 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
 		{
 			Food* food = game->food_list + fi;
-			food->cell_x = food->cell_y = 0;
+			food->pos = grid_pos(0, 0);
 			food->timer = 0;
 			food->eaten = false;
 			food->active = false;
 		}
 		// snake head
 		game->snake_part_count = 0;
-		SnakePart* head = grow_snake(game, 0, 0);
-		head->to_x = game->snake_dir_x = 1;
-		head->to_y = game->snake_dir_y = 0;
+		SnakePart* head = grow_snake(game, grid_pos(0, 0));
+		head->to_pos = game->snake_dir = grid_pos(1, 0);
 
 		// make the snake big at the start.
 #if 1
 		for (s32 si=1; si < 2; si++)
 		{
 			SnakePart* last_part = game->snake + (si-1);
-			SnakePart* part = grow_snake(game, last_part->from_x-1, last_part->from_y);
-			part->to_x = last_part->from_x;
-			part->to_y = last_part->from_y;
+			GridPos pos =last_part->from_pos;
+			pos.x -= 1;
+			SnakePart* part = grow_snake(game, pos);
+			part->to_pos = last_part->from_pos;
 		}
 #endif
 		spawn_food(game);
@@ -328,7 +325,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 	{
 		for (s32 cell_x=-HALF_CELL_COUNT; cell_x <= HALF_CELL_COUNT; cell_x++)
 		{
-			Vec2 pos = get_cell_pos(game, cell_x, cell_y);
+			Vec2 pos = get_cell_pos(game, grid_pos(cell_x, cell_y));
 			Color color = make_color(0.3, 0, 0.25, 1.0);
 			float margin = 2.0f;
 			Vec2 offset = vec2(-0.5 * game->cell_size + margin, -0.5* game->cell_size + margin);
@@ -346,7 +343,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		{
 			// eating food
 			Food* food = game->food_list + fi;
-			if (food->active && !food->eaten && (head->to_x == food->cell_x && head->to_y == food->cell_y))
+			if (food->active && !food->eaten && is_grid_pos_equal(head->to_pos, food->pos))
 			{
 				food->eaten = true;
 			}
@@ -355,7 +352,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		for (s32 si=1; si < game->snake_part_count; si++)
 		{
 			SnakePart* part = game->snake + si;
-			if (head->to_x == part->from_x && head->to_y == part->from_y)
+			if (is_grid_pos_equal(head->to_pos, part->from_pos))
 			{
 				game->game_over = true;
 				game->restart_timer = RESTART_TIME;
@@ -370,7 +367,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		Food* food = game->food_list + fi;
 		if (food->active && !food->eaten)
 		{
-			Vec2 food_pos = get_cell_pos(game, food->cell_x, food->cell_y);
+			Vec2 food_pos = get_cell_pos(game, food->pos);
 			float size = 0.4 * game->cell_size;
 			draw_rectangle(backbuffer, (u32)food_pos.x-0.5*size, (u32)food_pos.y-0.5*size,
 					size, size, get_u32_color(make_color(0.8f, 0, 0, 1.0f)));
@@ -386,13 +383,11 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		if (part->pos_t >= 1.0)
 		{
 			part->pos_t = 0;
-			part->from_x = part->to_x;
-			part->from_y = part->to_y;
+			part->from_pos = part->to_pos;
 			if (si == 0)
 			{
 				GridPos input;
-				input.x = game->snake_dir_x;
-				input.y = game->snake_dir_y;
+				input = game->snake_dir;
 				if (game->input_queue_count > 0)
 				{
 					u32 input_dir = game->input_queue[0];
@@ -404,50 +399,30 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 						}
 					}
 					game->input_queue_count--;
-					if (input_dir == Input_Left)
-					{
-						input.x = -1;
-						input.y = 0;
-					}
-					if (input_dir == Input_Right)
-					{
-						input.x = 1;
-						input.y = 0;
-					}
-					if (input_dir == Input_Up)
-					{
-						input.x = 0;
-						input.y = -1;
-					}
-					if (input_dir == Input_Down)
-					{
-						input.x = 0;
-						input.y = 1;
-					}
+					if (input_dir == Input_Left) input = grid_pos(-1, 0);
+					if (input_dir == Input_Right) input = grid_pos(1, 0);
+					if (input_dir == Input_Up) input = grid_pos(0, -1);
+					if (input_dir == Input_Down) input = grid_pos(0, 1);
 				}
-				if ((input.x + game->snake_dir_x) == 0 || (input.y + game->snake_dir_y) == 0)
+				if ((input.x + game->snake_dir.x) == 0 || (input.y + game->snake_dir.y) == 0)
 				{
-					input.x = game->snake_dir_x;
-					input.y = game->snake_dir_y;
+					input = game->snake_dir;
 				}
-				s32 cell_x = part->from_x + input.x;
-				s32 cell_y = part->from_y + input.y;
-				game->snake_dir_x = input.x;
-				game->snake_dir_y = input.y;
+				s32 cell_x = part->from_pos.x + input.x;
+				s32 cell_y = part->from_pos.y + input.y;
+				game->snake_dir = input;
 
 				// mirroring the edges
 				if (cell_x < -HALF_CELL_COUNT) cell_x = HALF_CELL_COUNT;
 				if (cell_x > HALF_CELL_COUNT) cell_x = -HALF_CELL_COUNT;
 				if (cell_y < -HALF_CELL_COUNT) cell_y = HALF_CELL_COUNT;
 				if (cell_y > HALF_CELL_COUNT) cell_y = -HALF_CELL_COUNT;
-				part->to_x = cell_x;
-				part->to_y = cell_y;
+				part->to_pos = grid_pos(cell_x, cell_y);
 			}
 			else 
 			{
 				SnakePart* last_part = game->snake + si-1;
-				part->to_x = last_part->from_x;
-				part->to_y = last_part->from_y;
+				part->to_pos = last_part->from_pos;
 			}
 		}
 
@@ -458,17 +433,17 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			Food* food = game->food_list + fi;
 			if (food->active && food->eaten)
 			{
-				if (food->cell_x == part->from_x && food->cell_y == part->from_y)
+				if (is_grid_pos_equal(food->pos, part->from_pos))
 				{
 					belly_full = 1.0 - part->pos_t;
 				}
-				else if (food->cell_x == part->to_x && food->cell_y == part->to_y)
+				else if (is_grid_pos_equal(food->pos, part->to_pos))
 				{
 					belly_full = part->pos_t;
 				}
 				if ((si == game->snake_part_count -1) && belly_full == 1.0f)
 				{
-					grow_snake(game, part->from_x, part->from_y);
+					grow_snake(game, part->from_pos);
 					food->eaten = false;
 				}
 			}
@@ -480,7 +455,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			game->restart_timer -= dt;
 			if (game->restart_timer <= 0) game->initialized = false;
 		}
-		else part->pos_t += 6.2 * dt;
+		else part->pos_t += 5.2 * dt;
 		
 		Color color = make_color(0.25f, 0.5f, 0, 1);
 		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
@@ -488,15 +463,15 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		// outside the screen check.
 		b32 on_h_mirror = false;
 		b32 on_v_mirror = false;
-		s32 h_value = part->to_x - part->from_x;
-		s32 v_value = part->to_y - part->from_y;
+		s32 h_value = part->to_pos.x - part->from_pos.x;
+		s32 v_value = part->to_pos.y - part->from_pos.y;
 		if (h_value < -1 || h_value > 1) on_h_mirror = true;
 		else if (v_value < -1 || v_value > 1) on_v_mirror = true;
 
 		if (!on_v_mirror && !on_h_mirror)
 		{
-			Vec2 from_pos = get_cell_pos(game, part->from_x, part->from_y);
-			Vec2 to_pos = get_cell_pos(game, part->to_x, part->to_y);
+			Vec2 from_pos = get_cell_pos(game, part->from_pos);
+			Vec2 to_pos = get_cell_pos(game, part->to_pos);
 
 			Vec2 pos = vec2_lerp(from_pos, part->pos_t, to_pos);
 
@@ -505,46 +480,44 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 		else // drawing two times to make a nice smooth animation when mirroring.
 		{
-			s32 mirror_to_x = part->to_x;
-			s32 mirror_to_y = part->to_y;
-			s32 mirror_from_x = part->from_x;
-			s32 mirror_from_y = part->from_y;
+			GridPos mirror_to = part->to_pos;
+			GridPos mirror_from = part->from_pos;
 			if (on_h_mirror)
 			{
 				if (h_value > 0)
 				{
-					mirror_to_x = part->from_x -1;
-					mirror_from_x = part->to_x +1;
+					mirror_to.x = part->from_pos.x -1;
+					mirror_from.x = part->to_pos.x +1;
 				}
 				else
 				{
-					mirror_to_x = part->from_x +1;
-					mirror_from_x = part->to_x -1;
+					mirror_to.x = part->from_pos.x +1;
+					mirror_from.x = part->to_pos.x -1;
 				}
 			}
 			else
 			{
 				if (v_value > 0)
 				{
-					mirror_to_y = part->from_y -1;
-					mirror_from_y = part->to_y +1;
+					mirror_to.y = part->from_pos.y -1;
+					mirror_from.y = part->to_pos.y +1;
 				}
 				else
 				{
-					mirror_to_y = part->from_y +1;
-					mirror_from_y = part->to_y -1;
+					mirror_to.y = part->from_pos.y +1;
+					mirror_from.y = part->to_pos.y -1;
 				}
 			}
 
-			Vec2 from_pos_a = get_cell_pos(game, part->from_x, part->from_y);
-			Vec2 to_pos_a = get_cell_pos(game, mirror_to_x, mirror_to_y);
+			Vec2 from_pos_a = get_cell_pos(game, part->from_pos);
+			Vec2 to_pos_a = get_cell_pos(game, mirror_to);
 
 			Vec2 pos = vec2_lerp(from_pos_a, part->pos_t, to_pos_a);
 			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part_size),
 					(u32)(pos.y - 0.5*part_size), part_size, part_size, get_u32_color(color));
 
-			Vec2 from_pos_b = get_cell_pos(game, mirror_from_x, mirror_from_y);
-			Vec2 to_pos_b = get_cell_pos(game, part->to_x, part->to_y);
+			Vec2 from_pos_b = get_cell_pos(game, mirror_from);
+			Vec2 to_pos_b = get_cell_pos(game, part->to_pos);
 
 			pos = vec2_lerp(from_pos_b, part->pos_t, to_pos_b);
 			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part_size),
@@ -553,6 +526,9 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 	}
 }
 
+//
+// SDL part
+//
 int main()
 {
 	SDL_Init(SDL_INIT_TIMER| SDL_INIT_VIDEO| SDL_INIT_EVENTS);
