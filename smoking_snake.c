@@ -103,6 +103,11 @@ Vec2 vec2_lerp(Vec2 from, float t, Vec2 to) {return  vec2_add(vec2_mul((1.0f -t)
 // Game
 typedef struct
 {
+	s32 x;
+	s32 y;
+}GridPos; // @todo change all s32 pair in the game to this.
+typedef struct
+{
 	Key up;
 	Key left;
 	Key right;
@@ -124,7 +129,16 @@ typedef struct
 }SnakePart;
 #define MAX_SNAKE_PARTS 128
 #define MAX_FOOD_COUNT 16
+#define MAX_INPUT_QUEUE 3
 #define RESTART_TIME 3.0f
+enum
+{
+	Input_None,
+	Input_Left,
+	Input_Right,
+	Input_Up,
+	Input_Down,
+};
 typedef struct
 {
 	b32 initialized;
@@ -134,8 +148,12 @@ typedef struct
 	u32 points;
 	Vec2 grid_center;
 	float cell_size;
-	s32 input_x;
-	s32 input_y;
+
+	u32 input_queue_count;
+	u32 input_queue[MAX_INPUT_QUEUE];
+
+	s32 snake_dir_x;
+	s32 snake_dir_y;
 
 	Food food_list[MAX_FOOD_COUNT];
 
@@ -252,6 +270,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		game->game_over = false;
 		game->restart_timer = 0;
 		game->points = 0;
+		game->input_queue_count = 0;
 
 		// initializing the food list
 		for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
@@ -265,10 +284,8 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		// snake head
 		game->snake_part_count = 0;
 		SnakePart* head = grow_snake(game, 0, 0);
-		head->to_x = 1;
-		head->to_y = 0;
-		game->input_x = 1;
-		game->input_y = 0;
+		head->to_x = game->snake_dir_x = 1;
+		head->to_y = game->snake_dir_y = 0;
 
 		// make the snake big at the start.
 #if 1
@@ -282,10 +299,25 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 #endif
 		spawn_food(game);
 	}
-	if (is_down(input->left) && game->input_x != 1) {game->input_x = -1; game->input_y = 0;}
-	else if (is_down(input->right) && game->input_x != -1) {game->input_x = 1; game->input_y = 0;}
-	else if (is_down(input->up) && game->input_y != 1) {game->input_y = -1; game->input_x = 0;}
-	else if (is_down(input->down) && game->input_y != -1) {game->input_y = 1; game->input_x = 0;}
+
+	u32 input_dir = Input_None;
+	if (is_down(input->left)) input_dir = Input_Left;
+	else if (is_down(input->right)) input_dir = Input_Right;
+	else if (is_down(input->up)) input_dir = Input_Up;
+	else if (is_down(input->down)) input_dir = Input_Down;
+
+	b32 equal_to_the_last = false;
+	if (game->input_queue_count > 0)
+	{
+		equal_to_the_last = game->input_queue[game->input_queue_count-1] == input_dir;
+	}
+	if (game->input_queue_count < MAX_INPUT_QUEUE)
+	{
+		if (input_dir != Input_None && !equal_to_the_last)
+		{
+			game->input_queue[game->input_queue_count++] = input_dir;
+		}
+	}
 
 	// clearing the screen
 	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, get_u32_color(make_color(0.4f, 0, 0.35f, 1.0f)));
@@ -358,10 +390,52 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			part->from_y = part->to_y;
 			if (si == 0)
 			{
-				s32 cell_x = part->from_x;
-				s32 cell_y = part->from_y;
-				cell_x += game->input_x;
-				cell_y += game->input_y;
+				GridPos input;
+				input.x = game->snake_dir_x;
+				input.y = game->snake_dir_y;
+				if (game->input_queue_count > 0)
+				{
+					u32 input_dir = game->input_queue[0];
+					if (game->input_queue_count > 1)
+					{
+						for (s32 ii=1; ii < MAX_INPUT_QUEUE; ii++)
+						{
+							game->input_queue[ii-1] = game->input_queue[ii];
+						}
+					}
+					game->input_queue_count--;
+					if (input_dir == Input_Left)
+					{
+						input.x = -1;
+						input.y = 0;
+					}
+					if (input_dir == Input_Right)
+					{
+						input.x = 1;
+						input.y = 0;
+					}
+					if (input_dir == Input_Up)
+					{
+						input.x = 0;
+						input.y = -1;
+					}
+					if (input_dir == Input_Down)
+					{
+						input.x = 0;
+						input.y = 1;
+					}
+				}
+				if ((input.x + game->snake_dir_x) == 0 || (input.y + game->snake_dir_y) == 0)
+				{
+					input.x = game->snake_dir_x;
+					input.y = game->snake_dir_y;
+				}
+				s32 cell_x = part->from_x + input.x;
+				s32 cell_y = part->from_y + input.y;
+				game->snake_dir_x = input.x;
+				game->snake_dir_y = input.y;
+
+				// mirroring the edges
 				if (cell_x < -HALF_CELL_COUNT) cell_x = HALF_CELL_COUNT;
 				if (cell_x > HALF_CELL_COUNT) cell_x = -HALF_CELL_COUNT;
 				if (cell_y < -HALF_CELL_COUNT) cell_y = HALF_CELL_COUNT;
@@ -406,7 +480,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			game->restart_timer -= dt;
 			if (game->restart_timer <= 0) game->initialized = false;
 		}
-		else part->pos_t += 8.2 * dt;
+		else part->pos_t += 6.2 * dt;
 		
 		Color color = make_color(0.25f, 0.5f, 0, 1);
 		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
