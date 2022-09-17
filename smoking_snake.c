@@ -101,17 +101,18 @@ Vec2 vec2(float x, float y)
 	return result;
 }
 Vec2 vec2_mul(float a, Vec2 b) {return vec2(a*b.x, a*b.y);}
-Vec2 vec2_div(Vec2 a, float b) {return vec2(a.x/b, a.y/b);}
+//Vec2 vec2_div(Vec2 a, float b) {return vec2(a.x/b, a.y/b);}
 Vec2 vec2_add(Vec2 a, Vec2 b)  {return vec2(a.x+b.x, a.y+b.y);}
 Vec2 vec2_sub(Vec2 a, Vec2 b) {return vec2(a.x-b.x, a.y-b.y);}
-float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
-Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
+//float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
+//Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
+Vec2 vec2_lerp(Vec2 from, float t, Vec2 to) {return  vec2_add(vec2_mul((1.0f -t), from), vec2_mul(t, to));}
 
 #define MAX_SNAKE_PARTS 128
 typedef struct
 {
-	Vec2 from_pos;
-	Vec2 to_pos;
+	s32 from_x, from_y;
+	s32 to_x, to_y;
 	float pos_t;
 	float radius;
 }SnakePart;
@@ -121,8 +122,9 @@ typedef struct
 	u32 points;
 	Vec2 grid_center;
 	float cell_size;
+	s32 input_x;
+	s32 input_y;
 
-	Vec2 input_dir;
 	u32 snake_part_count;
 	SnakePart snake[MAX_SNAKE_PARTS];
 }Game;
@@ -182,6 +184,7 @@ Vec2 get_cell_pos(Game* game, s32 cell_x, s32 cell_y)
 	return result;
 }
 
+#if 0
 // @todo maybe store the cell index into the snake part instead of this.
 void get_cell_from_pos(Game* game, Vec2 pos, s32* cell_x, s32* cell_y)
 {
@@ -190,6 +193,7 @@ void get_cell_from_pos(Game* game, Vec2 pos, s32* cell_x, s32* cell_y)
 	*cell_x = (s32)roundf(amount.x);
 	*cell_y = (s32)roundf(amount.y);
 }
+#endif
 
 void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 {
@@ -206,16 +210,19 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		{
 			SnakePart* part = game->snake + si;
 			part->radius = 0.7f * game->cell_size;
-			part->from_pos = get_cell_pos(game, 0, 0);
-			part->to_pos = part->from_pos;
+			part->from_x = 0;
+			part->from_y = 0;
+			part->to_x = 0;
+			part->to_y = 0;
 			part->pos_t = 0.0;
 		}
-		game->input_dir = vec2(1, 0);
+		game->input_x = 1;
+		game->input_y = 0;
 	}
-	if (is_down(input->left)) {game->input_dir.x = -1; game->input_dir.y = 0;}
-	if (is_down(input->right)) {game->input_dir.x = 1; game->input_dir.y = 0;}
-	if (is_down(input->up)) {game->input_dir.y = -1; game->input_dir.x = 0;}
-	if (is_down(input->down)) {game->input_dir.y = 1; game->input_dir.x = 0;}
+	if (is_down(input->left) && game->input_x != 1) {game->input_x = -1; game->input_y = 0;}
+	if (is_down(input->right) && game->input_x != -1) {game->input_x = 1; game->input_y = 0;}
+	if (is_down(input->up) && game->input_y != 1) {game->input_y = -1; game->input_x = 0;}
+	if (is_down(input->down) && game->input_y != -1) {game->input_y = 1; game->input_x = 0;}
 
 	//
 	// Rendering
@@ -237,43 +244,104 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 	}
 
+	// drawing the snake parts.
 	for (s32 si=0; si < game->snake_part_count; si++)
 	{
 		SnakePart* part = game->snake + si;
-		Vec2 displacement = vec2_sub(part->to_pos, part->from_pos);
-		float distance = vec2_length(displacement);
-		Vec2 pos_dir = vec2_div(displacement, distance); // normalization
-
-		part->pos_t += 8.2 * dt;
-		Vec2 pos = vec2_add(part->from_pos, vec2_mul(part->pos_t * distance, pos_dir));
 		if (part->pos_t >= 1.0)
 		{
 			part->pos_t = 0;
-			part->from_pos = part->to_pos;
+			part->from_x = part->to_x;
+			part->from_y = part->to_y;
 			if (si == 0)
 			{
-				s32 cell_x = 0;
-				s32 cell_y = 0;
-				get_cell_from_pos(game, part->from_pos, &cell_x, &cell_y);
-				cell_x += (s32)game->input_dir.x;
-				cell_y += (s32)game->input_dir.y;
+				s32 cell_x = part->from_x;
+				s32 cell_y = part->from_y;
+				cell_x += game->input_x;
+				cell_y += game->input_y;
 				if (cell_x < -HALF_CELL_COUNT) cell_x = HALF_CELL_COUNT;
 				if (cell_x > HALF_CELL_COUNT) cell_x = -HALF_CELL_COUNT;
 				if (cell_y < -HALF_CELL_COUNT) cell_y = HALF_CELL_COUNT;
 				if (cell_y > HALF_CELL_COUNT) cell_y = -HALF_CELL_COUNT;
-
-				part->to_pos =  get_cell_pos(game, cell_x, cell_y);
+				part->to_x = cell_x;
+				part->to_y = cell_y;
 			}
 			else 
 			{
 				SnakePart* last_part = game->snake + si-1;
-				part->to_pos = last_part->from_pos;
+				part->to_x = last_part->from_x;
+				part->to_y = last_part->from_y;
 			}
 		}
+
+		part->pos_t += 8.2 * dt;
 		Color color = make_color(0.25f, 0.5f, 0, 1);
 		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
-		draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
-				(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
+
+		b32 on_h_mirror = false;
+		b32 on_v_mirror = false;
+		s32 h_value = part->to_x - part->from_x;
+		s32 v_value = part->to_y - part->from_y;
+		if (h_value < -1 || h_value > 1) on_h_mirror = true;
+		else if (v_value < -1 || v_value > 1) on_v_mirror = true;
+
+		if (!on_v_mirror && !on_h_mirror)
+		{
+			Vec2 from_pos = get_cell_pos(game, part->from_x, part->from_y);
+			Vec2 to_pos = get_cell_pos(game, part->to_x, part->to_y);
+
+			Vec2 pos = vec2_lerp(from_pos, part->pos_t, to_pos);
+
+			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
+					(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
+		}
+		else // trying to do some smooth animation when on edge mirroring. 
+		{
+			s32 mirror_to_x = part->to_x;
+			s32 mirror_to_y = part->to_y;
+			s32 mirror_from_x = part->from_x;
+			s32 mirror_from_y = part->from_y;
+			if (on_h_mirror)
+			{
+				if (h_value > 0)
+				{
+					mirror_to_x = part->from_x -1;
+					mirror_from_x = part->to_x +1;
+				}
+				else
+				{
+					mirror_to_x = part->from_x +1;
+					mirror_from_x = part->to_x -1;
+				}
+			}
+			else
+			{
+				if (v_value > 0)
+				{
+					mirror_to_y = part->from_y -1;
+					mirror_from_y = part->to_y +1;
+				}
+				else
+				{
+					mirror_to_y = part->from_y +1;
+					mirror_from_y = part->to_y -1;
+				}
+			}
+
+			Vec2 from_pos_a = get_cell_pos(game, part->from_x, part->from_y);
+			Vec2 to_pos_a = get_cell_pos(game, mirror_to_x, mirror_to_y);
+
+			Vec2 pos = vec2_lerp(from_pos_a, part->pos_t, to_pos_a);
+			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
+					(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
+
+			Vec2 from_pos_b = get_cell_pos(game, mirror_from_x, mirror_from_y);
+			Vec2 to_pos_b = get_cell_pos(game, part->to_x, part->to_y);
+
+			pos = vec2_lerp(from_pos_b, part->pos_t, to_pos_b);
+			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part->radius),
+					(u32)(pos.y - 0.5*part->radius), part->radius, part->radius, get_u32_color(color));
+		}
 	}
 }
 
