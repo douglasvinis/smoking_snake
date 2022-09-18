@@ -138,10 +138,10 @@ typedef struct
 	float pos_t;
 	float radius;
 }SnakePart;
-#define MAX_SNAKE_PARTS 128
+#define MAX_SNAKE_PARTS ((CELL_COUNT * CELL_COUNT)-1)
 #define MAX_FOOD_COUNT 16
 #define MAX_INPUT_QUEUE 3
-#define RESTART_TIME 3.0f
+#define RESTART_TIME 5.0f
 enum
 {
 	Input_None,
@@ -155,6 +155,7 @@ typedef struct
 	b32 initialized;
 
 	float restart_timer;
+	float food_spawn_timer;
 	b32 game_over;
 	u32 points;
 	Vec2 grid_center;
@@ -221,6 +222,7 @@ void change_key(Key* key, s32 diff_add)
 //
 void spawn_food(Game* game)
 {
+	// @todo make sure that the food is spawned in a grid cell thats not being occupied by the snake.
 	Food* chosen = 0;
 	for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
 	{
@@ -241,6 +243,7 @@ void spawn_food(Game* game)
 SnakePart* grow_snake(Game* game, GridPos pos)
 {
 	SnakePart* part = game->snake + game->snake_part_count++;
+	ASSERT(game->snake_part_count <= MAX_SNAKE_PARTS);
 	part->radius = 0.7f * game->cell_size;
 	part->from_pos = pos;
 	part->to_pos = pos;
@@ -268,6 +271,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		game->restart_timer = 0;
 		game->points = 0;
 		game->input_queue_count = 0;
+		game->food_spawn_timer = 0;
 
 		// initializing the food list
 		for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
@@ -294,14 +298,13 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			part->to_pos = last_part->from_pos;
 		}
 #endif
-		spawn_food(game);
 	}
 
 	u32 input_dir = Input_None;
-	if (is_down(input->left)) input_dir = Input_Left;
-	else if (is_down(input->right)) input_dir = Input_Right;
-	else if (is_down(input->up)) input_dir = Input_Up;
-	else if (is_down(input->down)) input_dir = Input_Down;
+	if (is_just_down(input->left)) input_dir = Input_Left;
+	else if (is_just_down(input->right)) input_dir = Input_Right;
+	else if (is_just_down(input->up)) input_dir = Input_Up;
+	else if (is_just_down(input->down)) input_dir = Input_Down;
 
 	b32 equal_to_the_last = false;
 	if (game->input_queue_count > 0)
@@ -335,6 +338,16 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 	}
 #endif
+
+	// spawning some food.
+	if (game->food_spawn_timer <= 0)
+	{
+		game->food_spawn_timer = 3;
+		spawn_food(game);
+	}
+
+	else game->food_spawn_timer -= dt;
+
 	if (!game->game_over)
 	{
 		// detecting collision.
@@ -425,6 +438,22 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 				part->to_pos = last_part->from_pos;
 			}
 		}
+		// @note this is a hack to make things more responsive. @todo maybe solve this in a better way.
+		float speed_mod = 1.0f;
+		if (game->input_queue_count > 0)
+		{
+			GridPos input = {};
+			u32 input_dir = game->input_queue[0];
+			if (input_dir == Input_Left) input = grid_pos(-1, 0);
+			if (input_dir == Input_Right) input = grid_pos(1, 0);
+			if (input_dir == Input_Up) input = grid_pos(0, -1);
+			if (input_dir == Input_Down) input = grid_pos(0, 1);
+			b32 is_the_opposite = ((input.x + game->snake_dir.x) == 0 && (input.y + game->snake_dir.y) == 0);
+			if (!(is_grid_pos_equal(input, game->snake_dir) || is_the_opposite))
+			{
+				speed_mod = 1.5;
+			}
+		}
 
 		// checking for a full belly
 		float belly_full = 0;
@@ -445,6 +474,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 				{
 					grow_snake(game, part->from_pos);
 					food->eaten = false;
+					food->active = false;
 				}
 			}
 		}
@@ -455,7 +485,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			game->restart_timer -= dt;
 			if (game->restart_timer <= 0) game->initialized = false;
 		}
-		else part->pos_t += 5.2 * dt;
+		else part->pos_t += (speed_mod * 6.8f) * dt;
 		
 		Color color = make_color(0.25f, 0.5f, 0, 1);
 		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
@@ -593,6 +623,11 @@ int main()
 									case SDLK_s: change_key(&input.down, 1); break;
 									case SDLK_a: change_key(&input.left, 1); break;
 									case SDLK_d: change_key(&input.right, 1); break;
+
+									case SDLK_UP: change_key(&input.up, 1); break;
+									case SDLK_DOWN: change_key(&input.down, 1); break;
+									case SDLK_LEFT: change_key(&input.left, 1); break;
+									case SDLK_RIGHT: change_key(&input.right, 1); break;
 								}
 							}
 							else
@@ -603,6 +638,11 @@ int main()
 									case SDLK_s: change_key(&input.down, -1); break;
 									case SDLK_a: change_key(&input.left, -1); break;
 									case SDLK_d: change_key(&input.right, -1); break;
+
+									case SDLK_UP: change_key(&input.up, -1); break;
+									case SDLK_DOWN: change_key(&input.down, -1); break;
+									case SDLK_LEFT: change_key(&input.left, -1); break;
+									case SDLK_RIGHT: change_key(&input.right, -1); break;
 								}
 							}
 						}
