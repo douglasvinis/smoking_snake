@@ -49,6 +49,41 @@ Color make_color(float r, float g, float b, float a)
 	Color result = {r, g, b, a};
 	return result;
 }
+Color color_mul(float a, Color b) {return make_color(a*b.r, a*b.g, a*b.b, a*b.a);}
+Color color_lerp(Color from, float t, Color to)
+{
+	// @todo this is not the correct way to interpolate colors.
+	Color factor_a = color_mul((1.0f -t), from);
+	Color factor_b = color_mul((t), to);
+	Color result = make_color(factor_a.r + factor_b.r,
+			factor_a.g + factor_b.g,
+			factor_a.b + factor_b.b,
+			factor_a.a + factor_b.a);
+	return  result;
+}
+u32 color_to_u32(Color color)
+{
+	u32 result = ((u32)(color.a*255.0) << 24 |
+			(u32)(color.r*255.0) << 16|
+			(u32)(color.g*255.0) << 8 |
+			(u32)(color.b*255.0));
+	return result;
+}
+u32 alpha_blend(u32 dest_u32_color, Color src_premul_color, float alpha)
+{
+	Color dest_color = make_color((float)((dest_u32_color >> 16) & 0xff),
+			(float)((dest_u32_color >> 8) & 0xff),
+			(float)(dest_u32_color & 0xff), 1.0);
+	dest_color = color_mul(1.0 - alpha, dest_color);
+
+	dest_color.r = dest_color.r + src_premul_color.r;
+	dest_color.g = dest_color.g + src_premul_color.g;
+	dest_color.b = dest_color.b + src_premul_color.b;
+
+	// @note this may be writting in SDL buffer pad byte, can this cause problems??
+	u32 result = ((u32)dest_color.r << 16) | ((u32)dest_color.g << 8) | ((u32)dest_color.b);
+	return result;
+}
 
 //renderer
 // @note Pixmap is here just because i may decide draw a Pixmap into a Pixmap later instead of drawing everything
@@ -74,11 +109,6 @@ b32 is_just_down(Key key)
 	b32 result = key.changed && key.up_down_diff == 0;
 	return result;
 }
-b32 is_down(Key key)
-{
-	b32 result = key.up_down_diff == 1;
-	return result;
-}
 
 // Math.
 typedef struct
@@ -93,11 +123,11 @@ Vec2 vec2(float x, float y)
 	return result;
 }
 Vec2 vec2_mul(float a, Vec2 b) {return vec2(a*b.x, a*b.y);}
-//Vec2 vec2_div(Vec2 a, float b) {return vec2(a.x/b, a.y/b);}
+Vec2 vec2_div(Vec2 a, float b) {return vec2(a.x/b, a.y/b);}
 Vec2 vec2_add(Vec2 a, Vec2 b)  {return vec2(a.x+b.x, a.y+b.y);}
 Vec2 vec2_sub(Vec2 a, Vec2 b) {return vec2(a.x-b.x, a.y-b.y);}
-//float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
-//Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
+float vec2_length(Vec2 a) {return sqrtf(a.x*a.x + a.y*a.y);}
+Vec2 vec2_normalize(Vec2 a) {return vec2_div(a, vec2_length(a));}
 Vec2 vec2_lerp(Vec2 from, float t, Vec2 to) {return  vec2_add(vec2_mul((1.0f -t), from), vec2_mul(t, to));}
 
 // Game
@@ -136,7 +166,6 @@ typedef struct
 	GridPos from_pos;
 	GridPos to_pos;
 	float pos_t;
-	float radius;
 }SnakePart;
 #define MAX_SNAKE_PARTS ((CELL_COUNT * CELL_COUNT)-1)
 #define MAX_FOOD_COUNT 16
@@ -153,17 +182,17 @@ enum
 typedef struct
 {
 	b32 initialized;
-
 	float restart_timer;
-	float food_spawn_timer;
 	b32 game_over;
-	u32 points;
+	float time_count;
+
 	Vec2 grid_center;
 	float cell_size;
 
 	u32 input_queue_count;
 	u32 input_queue[MAX_INPUT_QUEUE];
 
+	float food_spawn_timer;
 	GridPos snake_dir;
 
 	Food food_list[MAX_FOOD_COUNT];
@@ -175,17 +204,9 @@ typedef struct
 //
 // Renderer procs
 //
-u32 get_u32_color(Color color)
+void draw_solid_rectangle(Pixmap* pixmap, s32 pos_x, s32 pos_y, s32 width, s32 height, Color color)
 {
-	u32 result = ((u32)(color.a*255.0) << 24 |
-			(u32)(color.r*255.0) << 16|
-			(u32)(color.g*255.0) << 8 |
-			(u32)(color.b*255.0));
-	return result;
-}
-
-void draw_rectangle(Pixmap* pixmap, s32 pos_x, s32 pos_y, s32 width, s32 height, u32 color)
-{
+	u32 color_u32 = color_to_u32(color);
 	// clipping the rectangle.
 	s32 min_x = pos_x;
 	s32 min_y = pos_y;
@@ -206,7 +227,60 @@ void draw_rectangle(Pixmap* pixmap, s32 pos_x, s32 pos_y, s32 width, s32 height,
 		u32* pixel = (u32*)(start_row + _y*pixmap->pitch) + min_x;
 		for (s32 _x=0; _x < (max_x-min_x); _x++)
 		{
-			*pixel++ = color;
+			*pixel++ = color_u32;
+		}
+	}
+}
+
+void draw_line(Pixmap* pixmap, Vec2 pos_a, Vec2 pos_b, Color color)
+{
+	Color premul_color = color_mul(color.a*255.0, color);
+	Vec2 displacement = vec2_sub(pos_b, pos_a);
+	float distance = vec2_length(displacement);
+	Vec2 dir = vec2_normalize(displacement);
+
+	for (s32 forward=0; forward < (s32)distance; forward++)
+	{
+		Vec2 pos = vec2_add(vec2_mul((float)forward, dir), pos_a);
+		if ((pos.x >= 0 && pos.x < pixmap->width) && (pos.y >= 0 && pos.y < pixmap->height))
+		{
+			u32* pixel = (u32*)((u8*)pixmap->pixels + (s32)pos.y * pixmap->pitch) + (s32)pos.x;
+
+			u32 dest_u32_color = *pixel;
+			u32 dest_color = alpha_blend(dest_u32_color, premul_color, color.a);
+			*pixel = dest_color;
+		}
+	}
+}
+
+void draw_circle(Pixmap* pixmap, float radius, float pos_x, float pos_y, Color color)
+{
+	u32 color_u32 = color_to_u32(color);
+	// @todo @speed try to implement Bresenham's circle algorithm to speed this up.
+	// - this should have an alpha blend
+	float min_x = pos_x - radius;
+	float min_y = pos_y - radius;
+	float max_x = pos_x + radius;
+	float max_y = pos_y + radius;;
+	if (min_x < 0) min_x = 0;
+	if (min_x > pixmap->width) min_x = (float)pixmap->width;
+	if (min_y < 0) min_y = 0;
+	if (min_y > pixmap->height) min_y = (float)pixmap->height;
+	if (max_x < 0) max_x = 0;
+	if (max_x > pixmap->width) max_x = (float)pixmap->width;
+	if (max_y < 0) max_y = 0;
+	if (max_y > pixmap->height) max_y = (float)pixmap->height;
+
+	u8* start_row = (u8*)pixmap->pixels + (s32)min_y * pixmap->pitch;
+	for (s32 _y=0; _y < (s32)(max_y-min_y)+1; _y++)
+	{
+		u32* pixel = (u32*)(start_row + _y*pixmap->pitch) + (s32)min_x;
+		for (s32 _x=0; _x < (s32)(max_x-min_x)+1; _x++)
+		{
+			Vec2 displacement = vec2_sub(vec2(pos_x, pos_y), vec2_add(vec2(_x, _y), vec2(min_x, min_y)));
+			float distance = vec2_length(displacement);
+			if (distance < radius) *pixel = color_u32;
+			pixel++;
 		}
 	}
 }
@@ -244,7 +318,6 @@ SnakePart* grow_snake(Game* game, GridPos pos)
 {
 	SnakePart* part = game->snake + game->snake_part_count++;
 	ASSERT(game->snake_part_count <= MAX_SNAKE_PARTS);
-	part->radius = 0.7f * game->cell_size;
 	part->from_pos = pos;
 	part->to_pos = pos;
 	part->pos_t = 0.0;
@@ -269,7 +342,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 
 		game->game_over = false;
 		game->restart_timer = 0;
-		game->points = 0;
+		game->time_count = 0;
 		game->input_queue_count = 0;
 		game->food_spawn_timer = 0;
 
@@ -300,6 +373,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 #endif
 	}
 
+	game->time_count += dt; // this is for animation and color lerp effects.
 	u32 input_dir = Input_None;
 	if (is_just_down(input->left)) input_dir = Input_Left;
 	else if (is_just_down(input->right)) input_dir = Input_Right;
@@ -319,24 +393,57 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 	}
 
+	// Setting colors
+#if 1
+	Color background_color = make_color(0.32f, 0, 0.3, 1.0f);
+	Color grid_color = make_color(0.5, 0, 0.4, 1.0);
+	Color snake_color_0 = make_color(0.65, 0.55, 0, 1);
+	Color snake_color_1 = make_color(0.15f, 0.55f, 0, 1);
+	Color snake_color_2 = snake_color_1;
+#else
+	Color background_color = make_color(0, 0.25, 0.20, 1.0f);
+	Color grid_color = make_color(0.1, 0.32, 0.32, 1.0);
+	Color snake_color_0 = make_color(0.70, 0.30, 0, 1);
+	Color snake_color_1 = make_color(0.45f, 0, 0.67, 1);
+	Color snake_color_2 = snake_color_1;
+#endif
+	Color food_color = make_color(0.8, 0.2, 0, 1.0);
+
 	// clearing the screen
-	draw_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, get_u32_color(make_color(0.4f, 0, 0.35f, 1.0f)));
+	draw_solid_rectangle(backbuffer, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, background_color);
 
 #if 1
 	// drawing a grid
+	/*
 	for (s32 cell_y=-HALF_CELL_COUNT; cell_y <= HALF_CELL_COUNT; cell_y++)
 	{
 		for (s32 cell_x=-HALF_CELL_COUNT; cell_x <= HALF_CELL_COUNT; cell_x++)
 		{
 			Vec2 pos = get_cell_pos(game, grid_pos(cell_x, cell_y));
-			Color color = make_color(0.3, 0, 0.25, 1.0);
+			Color color = make_color(0, 0, 0, 0.3);
 			float margin = 2.0f;
 			Vec2 offset = vec2(-0.5 * game->cell_size + margin, -0.5* game->cell_size + margin);
 			pos = vec2_add(pos, offset);
 			draw_rectangle(backbuffer, pos.x, pos.y, game->cell_size-2*margin,
-					game->cell_size-2*margin, get_u32_color(color));
+					game->cell_size-2*margin, color);
+			//draw_circle(backbuffer, 0.5*game->cell_size - margin, pos.x, pos.y, get_u32_color(color));
 		}
 	}
+	*/
+	for (s32 count=0; count < CELL_COUNT; count++)
+	{
+		// @todo merge these two loops.
+		Vec2 pos_a = vec2(count * game->cell_size, 0);
+		Vec2 pos_b = vec2(count * game->cell_size, backbuffer->height);
+		draw_solid_rectangle(backbuffer, pos_a.x, 0, 1, backbuffer->height, grid_color);
+	}
+	for (s32 count=0; count < CELL_COUNT; count++)
+	{
+		Vec2 pos_a = vec2(0, count * game->cell_size);
+		Vec2 pos_b = vec2(backbuffer->width, count * game->cell_size);
+		draw_solid_rectangle(backbuffer, 0, pos_a.y, backbuffer->width, 1, grid_color);
+	}
+
 #endif
 
 	// spawning some food.
@@ -374,18 +481,22 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 		}
 	}
 
-	// drawing all the food
-	for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
-	{
-		Food* food = game->food_list + fi;
-		if (food->active && !food->eaten)
+	{// drawing all the food
+		float value = sin((2*M_PI) * game->time_count);
+		value = (value + 1.0)/2.0; // mapping -1/1 to 0/1
+		food_color = color_lerp(make_color(1, 1, 0, 1), value, food_color);
+		float food_size = 0.2 * game->cell_size + ((1.0 - value) * 5);
+
+		for (s32 fi=0; fi < MAX_FOOD_COUNT; fi++)
 		{
-			Vec2 food_pos = get_cell_pos(game, food->pos);
-			float size = 0.4 * game->cell_size;
-			draw_rectangle(backbuffer, (u32)food_pos.x-0.5*size, (u32)food_pos.y-0.5*size,
-					size, size, get_u32_color(make_color(0.8f, 0, 0, 1.0f)));
-			food->timer -= dt;
-			if (food->timer < 0) food->active = false;
+			Food* food = game->food_list + fi;
+			if (food->active && !food->eaten)
+			{
+				Vec2 food_pos = get_cell_pos(game, food->pos);
+				draw_circle(backbuffer, 0.5*food_size, food_pos.x, food_pos.y, food_color);
+				food->timer -= dt;
+				if (food->timer < 0) food->active = false;
+			}
 		}
 	}
 
@@ -478,17 +589,19 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 				}
 			}
 		}
-		float part_size = part->radius + belly_full * 10;
 
+		float part_size = (0.72*game->cell_size) + belly_full * 15;
+		if (!game->game_over) part->pos_t += (speed_mod * 6.8f) * dt;
+		
+		Color part_color = snake_color_1;
+		if (si == 0) part_color = snake_color_0;
 		if (game->game_over)
 		{
-			game->restart_timer -= dt;
-			if (game->restart_timer <= 0) game->initialized = false;
+			// making the snake oscillate color.
+			float value = sin((4*M_PI) * game->time_count);
+			value = (value + 1.0)/2.0; // mapping -1/1 to 0/1
+			part_color = color_lerp(make_color(1, 1, 0, 1), value, part_color);
 		}
-		else part->pos_t += (speed_mod * 6.8f) * dt;
-		
-		Color color = make_color(0.25f, 0.5f, 0, 1);
-		if (si == 0) color = make_color(0.65, 0.5, 0, 1);
 
 		// outside the screen check.
 		b32 on_h_mirror = false;
@@ -504,9 +617,7 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			Vec2 to_pos = get_cell_pos(game, part->to_pos);
 
 			Vec2 pos = vec2_lerp(from_pos, part->pos_t, to_pos);
-
-			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part_size),
-					(u32)(pos.y - 0.5*part_size), part_size, part_size, get_u32_color(color));
+			draw_circle(backbuffer, 0.5*part_size, pos.x, pos.y, part_color);
 		}
 		else // drawing two times to make a nice smooth animation when mirroring.
 		{
@@ -543,16 +654,19 @@ void game_tick(Pixmap* backbuffer, Game* game, Input* input, float dt)
 			Vec2 to_pos_a = get_cell_pos(game, mirror_to);
 
 			Vec2 pos = vec2_lerp(from_pos_a, part->pos_t, to_pos_a);
-			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part_size),
-					(u32)(pos.y - 0.5*part_size), part_size, part_size, get_u32_color(color));
+			draw_circle(backbuffer, 0.5*part_size, pos.x, pos.y, part_color);
 
 			Vec2 from_pos_b = get_cell_pos(game, mirror_from);
 			Vec2 to_pos_b = get_cell_pos(game, part->to_pos);
 
 			pos = vec2_lerp(from_pos_b, part->pos_t, to_pos_b);
-			draw_rectangle(backbuffer, (u32)(pos.x - 0.5*part_size),
-					(u32)(pos.y - 0.5*part_size), part_size, part_size, get_u32_color(color));
+			draw_circle(backbuffer, 0.5*part_size, pos.x, pos.y, part_color);
 		}
+	}
+	if (game->game_over)
+	{
+		game->restart_timer -= dt;
+		if (game->restart_timer < 0) game->initialized = false;
 	}
 }
 
