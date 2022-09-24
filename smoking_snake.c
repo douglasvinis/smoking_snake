@@ -29,9 +29,8 @@ typedef unsigned short u16;
 #define HALF_CELL_COUNT (CELL_COUNT/2)
 
 // debug stuff.
-#define DEBUG_MODE 1 // this activate some debug printf's and ASSERT
-
-#ifdef DEBUG_MODE
+// @note DEBUG_MODE activate some debug printf's and ASSERT.
+#ifdef DEBUG_MODE 
 #define ASSERT(expression) if (!(expression)) *((u8*)0x0) = 0;
 #else
 #define ASSERT(...)
@@ -702,6 +701,7 @@ int main()
 		Input input = {};
 
 		b32 is_running = true;
+		float print_frame_rate_counter = 0;
 		while (is_running)
 		{
 			//
@@ -765,6 +765,7 @@ int main()
 			}
 
 			game_tick(backbuffer, game, &input, delta_time);
+			print_frame_rate_counter += delta_time;
 
 			// sleep some time to maintain 16ms if needed.
 			u32 work_time = SDL_GetTicks64() - time_last_frame;
@@ -776,7 +777,12 @@ int main()
 				SDL_Delay(sleep_time);
 			}
 #if DEBUG_MODE
-			printf("] work-frame | %2dms %2dms\n", work_time, work_time + sleep_time);
+			// printing the frame rate once per second.
+			if (print_frame_rate_counter > 1.0)
+			{
+				print_frame_rate_counter = 0;
+				printf("] work-frame | %2dms %2dms\n", work_time, work_time + sleep_time);
+			}
 #endif
 			SDL_UpdateWindowSurface(window);
 			time_last_frame = SDL_GetTicks64();
